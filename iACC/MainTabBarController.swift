@@ -5,9 +5,12 @@
 import UIKit
 
 class MainTabBarController: UITabBarController {
+
+    private var friendsCache: FriendsCache!
 	
-	convenience init() {
+    convenience init(friendsCache: FriendsCache) {
 		self.init(nibName: nil, bundle: nil)
+        self.friendsCache = friendsCache
 		self.setupViewController()
 	}
 
@@ -52,8 +55,19 @@ class MainTabBarController: UITabBarController {
 	}
 	
 	private func makeFriendsList() -> ListViewController {
-		let vc = ListViewController()
-		vc.fromFriendsScreen = true
+        let vc = ListViewController()
+        vc.shouldRetry = true
+        vc.maxRetryCount = 2
+        vc.title = "Friends"
+        vc.navigationItem.rightBarButtonItem = UIBarButtonItem(barButtonSystemItem: .add, target: vc, action: #selector(addFriend))
+        let isPremium = User.shared?.isPremium == true
+        vc.service = FriendsAPIItemsServiceAdapter(
+            api: FriendsAPI.shared,
+            cache: isPremium ? friendsCache: NullFriendsCache(),
+            select: { [weak vc] item in
+                vc?.select(friend: item)
+            })
+        vc.fromFriendsScreen = true
 		return vc
 	}
 	
@@ -75,4 +89,50 @@ class MainTabBarController: UITabBarController {
 		return vc
 	}
 	
+}
+
+struct FriendsAPIItemsServiceAdapter: ItemsService {
+    let api: FriendsAPI
+    let cache: FriendsCache
+    let select: (Friend) -> Void
+
+    func loadItems(completion: @escaping (Result<[ItemViewModel], Error>) -> Void) {
+        api.loadFriends { result in
+            DispatchQueue.mainAsyncIfNeeded {
+                completion(result.map { items in
+                    cache.save(items)
+
+                    return items.map { item in
+                        ItemViewModel(friend: item) {
+                            select(item)
+                        }
+                    }
+                })
+            }
+        }
+    }
+}
+
+struct CardAPIItemsServiceAdapter: ItemsService {
+    let api: CardAPI
+    let select: (Card) -> Void
+
+    func loadItems(completion: @escaping (Result<[ItemViewModel], Error>) -> Void) {
+        api.loadCards { result in
+            DispatchQueue.mainAsyncIfNeeded {
+                completion(result.map { items in
+                    items.map { item in
+                        ItemViewModel(card: item) {
+                            select(item)
+                        }
+                    }
+                })
+            }
+        }
+    }
+}
+
+//MARK: Null Object Pattern
+class NullFriendsCache: FriendsCache {
+    override func save(_ newFriends: [Friend]) {}
 }
